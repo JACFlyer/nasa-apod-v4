@@ -28,6 +28,7 @@ import edu.cnm.deepdive.nasaapod.service.ApodDatabase;
 import edu.cnm.deepdive.nasaapod.service.ApodService;
 import io.reactivex.Completable;
 import io.reactivex.Maybe;
+import io.reactivex.Scheduler;
 import io.reactivex.Single;
 import io.reactivex.SingleSource;
 import io.reactivex.schedulers.Schedulers;
@@ -58,7 +59,9 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
   private final ApodDatabase database;
   private final ApodService nasa;
   private final Executor networkPool;
+  private final Executor mruPool;
   private final SharedPreferences preferences;
+  private int cacheSize;
 
 
   private ApodRepository() {
@@ -68,8 +71,10 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
     database = ApodDatabase.getInstance();
     nasa = ApodService.getInstance();
     networkPool = Executors.newFixedThreadPool(NETWORK_THREAD_COUNT);
+    mruPool = Executors.newSingleThreadExecutor();
     preferences = PreferenceManager.getDefaultSharedPreferences(context);
     preferences.registerOnSharedPreferenceChangeListener(this);
+    cacheSize = getCacheSizePreference();
 
   }
 
@@ -119,6 +124,7 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
                   }
                 })
                 .subscribeOn(Schedulers.from(networkPool))
+                .doAfterSuccess((ignorePath) -> retainMru(cacheSize))
                 .subscribe(observer)
         );
   }
@@ -218,10 +224,34 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
 
   @Override
   public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
-    int cacheSize = preferences.getInt(context.getString(R.string.cache_size), 0);
-    Log.d(getClass().getName(), String.format("Cache size = %d", cacheSize));
+    cacheSize = getCacheSizePreference();
     //  TODO Use updated preference.
   }
+
+  private int getCacheSizePreference() {
+    return preferences.getInt(context.getString(R.string.cache_size), 0);
+  }
+
+  private void retainMru(int limit) {
+    if (limit > 0) {
+      int[] count = {0}; // Use element 0 as counter; array reference is effectively final.
+      ApodDao dao = database.getApodDao();
+      dao.selectMru()
+          .subscribeOn(Schedulers.from(mruPool))
+          .subscribe(
+              (apods) -> {
+                for (Apod apod : apods) {
+                  File file = getFile(apod);
+                  if (file.exists() && ++count[0] > limit) {
+                    file.delete();
+                  }
+                }
+              },
+              (throwable) -> {/* TODO Handle failure in some way. */}
+          );
+    }
+  }
+
 
   private static class InstanceHolder {
 

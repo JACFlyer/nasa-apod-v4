@@ -10,7 +10,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="?android:attr/selectableItemBackground"
-    android:theme="@style/HistoryItem">
+     android:theme="@style/HistoryItem">
 
     <ImageView
       android:id="@+id/thumbnail"
